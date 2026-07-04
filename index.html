@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>RBN — Rotary Business Network</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+  <style>
+    body{font-family:'Inter',sans-serif;background:#F3F5FA;}
+    .disp{font-family:'Space Grotesk',sans-serif;}
+    ::-webkit-scrollbar{width:8px;height:8px}
+    ::-webkit-scrollbar-thumb{background:#C7D1E8;border-radius:8px}
+    .ring-focus:focus{outline:none;box-shadow:0 0 0 3px rgba(23,69,143,0.18)}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+
+/* ═══════════════════════════════════════════════════════
+   FIREBASE — shared fintech-nd project, new isolated path
+═══════════════════════════════════════════════════════ */
+const FIREBASE_CONFIG = {
+  apiKey:            "AIzaSyBJcohYrAYOMn-C_qdbPXMwOeMyGy8Sw1M",
+  authDomain:        "fintech-nd.firebaseapp.com",
+  databaseURL:       "https://fintech-nd-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId:         "fintech-nd",
+  storageBucket:     "fintech-nd.firebasestorage.app",
+  messagingSenderId: "577595905463",
+  appId:             "1:577595905463:web:69beb0a824b0d972560432"
+};
+firebase.initializeApp(FIREBASE_CONFIG);
+const DB = firebase.database();
+const DB_PATH = "rotarybiz/v1";
+const ADMIN_PIN = "1234"; // change before real launch
+
+const { useState, useEffect, useMemo } = React;
+
+/* ── helpers ── */
+const toArr = (v) => {
+  if (!v) return [];
+  if (Array.isArray(v)) return v.filter(Boolean);
+  if (typeof v === "object") return Object.values(v).filter(Boolean);
+  return [];
+};
+const uid = () => Math.random().toString(36).slice(2,9);
+const waLink = (phone, name) => `https://wa.me/91${String(phone).replace(/\D/g,"").slice(-10)}?text=${encodeURIComponent(`Hi ${name}, connecting with you via Rotary Business Network 🤝`)}`;
+const telLink = (phone) => `tel:+91${String(phone).replace(/\D/g,"").slice(-10)}`;
+
+const CATEGORIES = [
+  "Manufacturing & Industrial","Trading & Retail","Healthcare & Pharma","Finance, Insurance & CA",
+  "Legal","Real Estate & Construction","IT & Technology","Education & Training",
+  "Hospitality & Events","Textiles & Apparel","Automobile","Food & FMCG",
+  "Media & Advertising","Consulting","Others"
+];
+
+/* ── seed / sample data (placeholder — replace via Admin) ── */
+const SEED = [
+  {id:uid(), name:"Rtn. Anil Poddar", businessName:"Poddar Steel Traders", category:"Trading & Retail", subCategory:"Steel & Hardware", city:"Patna", club:"RC Patna Central", tags:["steel","hardware","wholesale"], offer:"TMT bars, structural steel, hardware supply at wholesale rates", need:"Looking for logistics/transport partners", phone:"9835000001", verified:true, featured:true},
+  {id:uid(), name:"Rtn. Dr. Pritam Jha", businessName:"Jha Diagnostics & Path Lab", category:"Healthcare & Pharma", subCategory:"Diagnostics", city:"Patna", club:"RC Patna Central", tags:["pathology","diagnostics","health checkup"], offer:"Full-body checkups, home sample collection, corporate health packages", need:"Referrals for corporate tie-ups", phone:"9835000002", verified:true, featured:false},
+  {id:uid(), name:"Rtn. Chintaan Jain", businessName:"Jain & Associates", category:"Finance, Insurance & CA", subCategory:"Chartered Accountancy", city:"Patna", club:"RC Patna Central", tags:["ca","gst","audit","tax planning"], offer:"GST filing, audits, tax planning for SMEs", need:"Clients needing statutory audit or GST registration", phone:"9835000003", verified:false, featured:false},
+  {id:uid(), name:"Rtn. Sanjay Boobna", businessName:"Boobna Constructions", category:"Real Estate & Construction", subCategory:"Residential Builders", city:"Patna", club:"RC Patna Central", tags:["construction","builder","residential"], offer:"Residential & commercial construction, project management", need:"Interior designers and electrical contractors for tie-ups", phone:"9835000004", verified:true, featured:false},
+  {id:uid(), name:"Rtn. Ayush Bhartia", businessName:"Bhartia InfoTech", category:"IT & Technology", subCategory:"Web & App Development", city:"Patna", club:"RC Patna Central", tags:["website","app development","software"], offer:"Custom websites, mobile apps, business automation tools", need:"Members needing digital presence or CRM systems", phone:"9835000005", verified:false, featured:true},
+  {id:uid(), name:"Rtn. Suraj Agarwal", businessName:"Agarwal Event Studio", category:"Hospitality & Events", subCategory:"Event Management", city:"Patna", club:"RC Patna Central", tags:["events","weddings","catering"], offer:"Wedding planning, corporate events, catering coordination", need:"Photographers and decorators for empanelment", phone:"9835000006", verified:false, featured:false},
+];
+
+/* ══════════════════════════════════
+   SMALL UI PRIMITIVES
+══════════════════════════════════ */
+const INP = "w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none ring-focus bg-white";
+
+function Fld({label, children, hint}) {
+  return (
+    <div>
+      <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">{label}</label>
+      {children}
+      {hint && <p className="text-xs text-slate-400 mt-1">{hint}</p>}
+    </div>
+  );
+}
+
+function Modal({open,onClose,title,children,wide}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 overflow-y-auto" style={{background:"rgba(15,23,42,0.6)"}}>
+      <div className={`bg-white rounded-2xl shadow-2xl w-full my-6 ${wide?"max-w-2xl":"max-w-md"}`}>
+        <div className="flex justify-between items-center px-6 pt-5 pb-4 border-b border-slate-100">
+          <h2 className="disp font-bold text-slate-800">{title}</h2>
+          <button onClick={onClose} className="text-slate-300 hover:text-slate-700 text-xl font-bold leading-none">✕</button>
+        </div>
+        <div className="px-6 py-5">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function Confirm({open,msg,onOk,onCancel}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{background:"rgba(15,23,42,0.6)"}}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+        <div className="text-3xl text-center mb-3">⚠️</div>
+        <p className="text-center text-slate-700 font-semibold mb-5">{msg}</p>
+        <div className="flex gap-3">
+          <button onClick={onCancel} className="flex-1 py-2.5 bg-slate-100 text-slate-600 rounded-xl text-sm font-semibold hover:bg-slate-200">Cancel</button>
+          <button onClick={onOk} className="flex-1 py-2.5 bg-red-600 text-white rounded-xl text-sm font-semibold hover:bg-red-700">Delete</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* Signature motif: interlocking-circles mark used as a small eyebrow / divider device
+   (abstract "connection" glyph — not the Rotary emblem itself) */
+function LinkMark({size=18, color="#17458F"}) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 20" fill="none">
+      <circle cx="11" cy="10" r="8.5" stroke={color} strokeWidth="2"/>
+      <circle cx="21" cy="10" r="8.5" stroke="#F7A81B" strokeWidth="2"/>
+    </svg>
+  );
+}
+
+const BLANK_MEMBER = () => ({
+  name:"", businessName:"", category:CATEGORIES[0], subCategory:"", city:"",
+  club:"", tags:"", offer:"", need:"", phone:"", verified:false, featured:false
+});
+
+/* ══════════════════════════════════
+   MAIN APP
+══════════════════════════════════ */
+function App() {
+  const [members, setMembers]   = useState([]);
+  const [loaded,  setLoaded]    = useState(false);
+  const [syncSt,  setSyncSt]    = useState("connecting");
+
+  const [q,        setQ]        = useState("");
+  const [catFilter,setCatFilter]= useState("all");
+  const [cityFilter,setCityFilter]=useState("all");
+  const [featOnly, setFeatOnly] = useState(false);
+
+  const [isAdmin,  setIsAdmin]  = useState(false);
+  const [pinModal, setPinModal] = useState(false);
+  const [pinInput, setPinInput] = useState("");
+
+  const [modal,    setModal]    = useState(null); // 'member'
+  const [form,     setForm]     = useState(BLANK_MEMBER());
+  const [editId,   setEditId]   = useState(null);
+  const [confirm,  setConfirm]  = useState(null);
+  const [toast,    setToast]    = useState(null);
+
+  useEffect(() => {
+    const ref = DB.ref(DB_PATH);
+    ref.on("value", snap => {
+      try {
+        const raw = snap.val();
+        if (raw === null) {
+          ref.set(SEED).catch(console.error);
+        } else {
+          setMembers(toArr(raw));
+          setLoaded(true); setSyncSt("synced");
+        }
+      } catch(e){ console.error(e); setSyncSt("error"); setLoaded(true); }
+    }, e => { console.error(e); setSyncSt("error"); setLoaded(true); });
+    return () => ref.off();
+  }, []);
+
+  const save = (list) => {
+    setSyncSt("saving");
+    DB.ref(DB_PATH).set(list).then(()=>setSyncSt("synced")).catch(e=>{console.error(e);setSyncSt("error");});
+  };
+  const notify = (msg,c="green") => { setToast({msg,c}); setTimeout(()=>setToast(null),2400); };
+
+  /* ── admin gate ── */
+  const tryPin = () => {
+    if (pinInput === ADMIN_PIN) { setIsAdmin(true); setPinModal(false); setPinInput(""); notify("Admin mode on"); }
+    else { notify("Incorrect PIN","red"); setPinInput(""); }
+  };
+  const exitAdmin = () => setIsAdmin(false);
+
+  /* ── derived lists ── */
+  const cities = useMemo(()=>[...new Set(members.map(m=>m.city).filter(Boolean))].sort(),[members]);
+
+  const filtered = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    return members.filter(m => {
+      if (catFilter!=="all" && m.category!==catFilter) return false;
+      if (cityFilter!=="all" && m.city!==cityFilter) return false;
+      if (featOnly && !m.featured) return false;
+      if (!term) return true;
+      const hay = [m.name,m.businessName,m.category,m.subCategory,m.city,m.offer,m.need,...(m.tags||[])].join(" ").toLowerCase();
+      return hay.includes(term);
+    }).sort((a,b)=> (b.featured?1:0)-(a.featured?1:0));
+  }, [members, q, catFilter, cityFilter, featOnly]);
+
+  /* ── CRUD ── */
+  const openAdd  = () => { setForm(BLANK_MEMBER()); setEditId(null); setModal("member"); };
+  const openEdit = (m) => { setForm({...m, tags:(m.tags||[]).join(", ")}); setEditId(m.id); setModal("member"); };
+  const closeModal = () => setModal(null);
+
+  const saveMember = () => {
+    if (!form.name.trim() || !form.businessName.trim() || !form.phone.trim()) return;
+    const entry = {
+      ...form, id: editId || uid(),
+      tags: form.tags.split(",").map(t=>t.trim()).filter(Boolean),
+    };
+    if (editId) { save(members.map(m=>m.id===editId?entry:m)); notify("Member updated"); }
+    else        { save([...members, entry]); notify("Member added"); }
+    closeModal();
+  };
+
+  const delMember = (id, name) => setConfirm({
+    msg: `Remove "${name}" from the network?`,
+    onOk: () => { save(members.filter(m=>m.id!==id)); setConfirm(null); notify("Removed","red"); }
+  });
+
+  const toggleFlag = (id, key) => save(members.map(m=>m.id===id?{...m,[key]:!m[key]}:m));
+
+  /* ══════════════════════════════════
+     LOADING
+  ══════════════════════════════════ */
+  if (!loaded) return (
+    <div className="min-h-screen flex flex-col items-center justify-center gap-4">
+      <LinkMark size={40}/>
+      <p className="disp font-bold text-slate-600 text-lg">Connecting to RBN…</p>
+      {syncSt==="error" && <p className="text-red-500 text-sm">Firebase connection failed — check config.</p>}
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen pb-16">
+
+      {toast && (
+        <div className={`fixed top-4 right-4 z-[100] px-4 py-2.5 rounded-xl text-white text-sm font-bold shadow-xl
+          ${toast.c==="green"?"bg-emerald-500":toast.c==="red"?"bg-red-500":"bg-[#17458F]"}`}>{toast.msg}</div>
+      )}
+      <Confirm open={!!confirm} msg={confirm?.msg} onOk={confirm?.onOk} onCancel={()=>setConfirm(null)}/>
+
+      {/* ── HEADER ── */}
+      <header className="bg-[#17458F] text-white">
+        <div className="max-w-6xl mx-auto px-4 pt-6 pb-8">
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div className="flex items-center gap-3">
+              <LinkMark size={30} color="#FFFFFF"/>
+              <div>
+                <h1 className="disp text-2xl font-bold tracking-tight leading-none">RBN</h1>
+                <p className="text-xs text-white/60 mt-0.5 tracking-wide">Rotary Business Network · District 3250 (concept)</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className={`text-[11px] px-2.5 py-1 rounded-full font-semibold hidden sm:inline
+                ${syncSt==="synced"?"bg-emerald-400/20 text-emerald-200":syncSt==="saving"?"bg-amber-400/20 text-amber-200":"bg-red-400/20 text-red-200"}`}>
+                {syncSt==="synced"?"● Live":syncSt==="saving"?"⟳ Saving":"✕ Error"}
+              </span>
+              {isAdmin ? (
+                <>
+                  <button onClick={openAdd} className="bg-[#F7A81B] hover:bg-[#e29a12] text-[#17458F] px-3.5 py-1.5 rounded-lg text-xs font-bold">+ Add Member</button>
+                  <button onClick={exitAdmin} className="bg-white/10 hover:bg-white/20 px-3.5 py-1.5 rounded-lg text-xs font-bold">Exit Admin</button>
+                </>
+              ) : (
+                <button onClick={()=>setPinModal(true)} className="bg-white/10 hover:bg-white/20 px-3.5 py-1.5 rounded-lg text-xs font-bold">🔒 Admin</button>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-6 flex flex-col md:flex-row gap-3">
+            <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search by name, business, service, tag…"
+              className="flex-1 px-4 py-3 rounded-xl text-sm text-slate-800 ring-focus focus:outline-none"/>
+            <select value={catFilter} onChange={e=>setCatFilter(e.target.value)} className="px-3 py-3 rounded-xl text-sm text-slate-700 md:w-56">
+              <option value="all">All categories</option>
+              {CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}
+            </select>
+            <select value={cityFilter} onChange={e=>setCityFilter(e.target.value)} className="px-3 py-3 rounded-xl text-sm text-slate-700 md:w-40">
+              <option value="all">All cities</option>
+              {cities.map(c=><option key={c} value={c}>{c}</option>)}
+            </select>
+            <label className="flex items-center gap-2 bg-white/10 px-3.5 rounded-xl text-xs font-semibold whitespace-nowrap cursor-pointer">
+              <input type="checkbox" checked={featOnly} onChange={e=>setFeatOnly(e.target.checked)} className="w-4 h-4"/>
+              ⭐ Featured only
+            </label>
+          </div>
+        </div>
+      </header>
+
+      {/* ── PIN MODAL ── */}
+      <Modal open={pinModal} onClose={()=>{setPinModal(false);setPinInput("");}} title="🔒 Admin Access">
+        <Fld label="Enter admin PIN">
+          <input type="password" value={pinInput} onChange={e=>setPinInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&tryPin()}
+            className={INP} autoFocus/>
+        </Fld>
+        <button onClick={tryPin} className="w-full mt-4 py-2.5 bg-[#17458F] text-white rounded-xl text-sm font-bold hover:bg-[#123a78]">Unlock</button>
+      </Modal>
+
+      {/* ── ADD / EDIT MEMBER ── */}
+      <Modal open={modal==="member"} onClose={closeModal} title={editId?"✏️ Edit Member":"➕ Add Member"} wide>
+        <div className="grid grid-cols-2 gap-4">
+          <Fld label="Full Name *"><input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Rtn. Full Name" className={INP} autoFocus/></Fld>
+          <Fld label="Business Name *"><input value={form.businessName} onChange={e=>setForm({...form,businessName:e.target.value})} className={INP}/></Fld>
+          <Fld label="Category">
+            <select value={form.category} onChange={e=>setForm({...form,category:e.target.value})} className={INP}>
+              {CATEGORIES.map(c=><option key={c}>{c}</option>)}
+            </select>
+          </Fld>
+          <Fld label="Sub-category"><input value={form.subCategory} onChange={e=>setForm({...form,subCategory:e.target.value})} placeholder="e.g. Steel & Hardware" className={INP}/></Fld>
+          <Fld label="City"><input value={form.city} onChange={e=>setForm({...form,city:e.target.value})} className={INP}/></Fld>
+          <Fld label="Club"><input value={form.club} onChange={e=>setForm({...form,club:e.target.value})} placeholder="e.g. RC Patna Central" className={INP}/></Fld>
+          <div className="col-span-2"><Fld label="Tags (comma separated)" hint="Used for search matching"><input value={form.tags} onChange={e=>setForm({...form,tags:e.target.value})} placeholder="gst, tax planning, audit" className={INP}/></Fld></div>
+          <div className="col-span-2"><Fld label="What I offer"><textarea value={form.offer} onChange={e=>setForm({...form,offer:e.target.value})} rows={2} className={INP}/></Fld></div>
+          <div className="col-span-2"><Fld label="What I'm looking for"><textarea value={form.need} onChange={e=>setForm({...form,need:e.target.value})} rows={2} className={INP}/></Fld></div>
+          <Fld label="Phone (WhatsApp/Call) *"><input value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})} placeholder="98350 00000" className={INP}/></Fld>
+          <div className="flex items-end gap-5 pb-1">
+            <label className="flex items-center gap-2 text-sm font-semibold text-slate-600 cursor-pointer">
+              <input type="checkbox" checked={form.verified} onChange={e=>setForm({...form,verified:e.target.checked})} className="w-4 h-4"/> Verified
+            </label>
+            <label className="flex items-center gap-2 text-sm font-semibold text-slate-600 cursor-pointer">
+              <input type="checkbox" checked={form.featured} onChange={e=>setForm({...form,featured:e.target.checked})} className="w-4 h-4"/> Featured
+            </label>
+          </div>
+        </div>
+        <div className="flex gap-3 pt-5 mt-2 border-t border-slate-100">
+          <button onClick={closeModal} className="flex-1 py-2.5 bg-slate-100 text-slate-700 rounded-xl text-sm font-bold hover:bg-slate-200">Cancel</button>
+          <button onClick={saveMember} disabled={!form.name.trim()||!form.businessName.trim()||!form.phone.trim()}
+            className="flex-1 py-2.5 bg-[#17458F] text-white rounded-xl text-sm font-bold hover:bg-[#123a78] disabled:opacity-40">
+            {editId?"Update Member":"Add Member"}
+          </button>
+        </div>
+      </Modal>
+
+      {/* ── DIRECTORY ── */}
+      <div className="max-w-6xl mx-auto px-4 mt-6">
+        <div className="flex items-center justify-between mb-4">
+          <p className="text-sm text-slate-500 font-medium">{filtered.length} of {members.length} members</p>
+          {isAdmin && <p className="text-xs text-[#17458F] font-bold bg-[#17458F]/10 px-3 py-1 rounded-full">Admin mode — edit controls visible</p>}
+        </div>
+
+        {filtered.length===0 && (
+          <div className="text-center py-24">
+            <LinkMark size={32}/>
+            <p className="text-slate-400 font-semibold mt-3">No members match this search yet.</p>
+            <p className="text-slate-300 text-sm mt-1">Try a different keyword or clear filters.</p>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filtered.map(m => (
+            <div key={m.id} className={`bg-white rounded-2xl border shadow-sm hover:shadow-md transition-shadow p-5 flex flex-col
+              ${m.featured?"border-[#F7A81B] ring-1 ring-[#F7A81B]/40":"border-slate-100"}`}>
+
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-[#17458F]">
+                    <LinkMark size={12}/> {m.category}{m.subCategory?` · ${m.subCategory}`:""}
+                  </div>
+                  <h3 className="disp font-bold text-slate-900 mt-1 truncate">{m.businessName}</h3>
+                  <p className="text-xs text-slate-400 truncate">{m.name} {m.club?`· ${m.club}`:""}</p>
+                </div>
+                {m.featured && <span className="text-[10px] font-bold bg-[#F7A81B]/15 text-[#a6740c] px-2 py-1 rounded-full whitespace-nowrap">⭐ Featured</span>}
+              </div>
+
+              <div className="flex items-center gap-2 mb-3">
+                {m.verified && <span className="text-[10px] font-bold bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full">✓ Verified</span>}
+                {m.city && <span className="text-[10px] font-bold bg-slate-50 text-slate-500 px-2 py-0.5 rounded-full">📍 {m.city}</span>}
+              </div>
+
+              {m.offer && <p className="text-sm text-slate-600 mb-2"><span className="font-bold text-slate-400 text-xs uppercase tracking-wide block mb-0.5">Offers</span>{m.offer}</p>}
+              {m.need &&  <p className="text-sm text-slate-600 mb-3"><span className="font-bold text-slate-400 text-xs uppercase tracking-wide block mb-0.5">Looking for</span>{m.need}</p>}
+
+              {(m.tags||[]).length>0 && (
+                <div className="flex flex-wrap gap-1.5 mb-4">
+                  {m.tags.map(t=><span key={t} className="text-[10px] font-semibold bg-[#17458F]/5 text-[#17458F] px-2 py-0.5 rounded-full">{t}</span>)}
+                </div>
+              )}
+
+              <div className="mt-auto flex gap-2 pt-2">
+                <a href={telLink(m.phone)} className="flex-1 text-center py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold">📞 Call</a>
+                <a href={waLink(m.phone, m.name)} target="_blank" rel="noopener" className="flex-1 text-center py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-xs font-bold">💬 WhatsApp</a>
+              </div>
+
+              {isAdmin && (
+                <div className="flex gap-2 pt-3 mt-3 border-t border-slate-50">
+                  <button onClick={()=>toggleFlag(m.id,"verified")} className="text-[11px] font-bold text-slate-400 hover:text-emerald-600">{m.verified?"Unverify":"Verify"}</button>
+                  <button onClick={()=>toggleFlag(m.id,"featured")} className="text-[11px] font-bold text-slate-400 hover:text-amber-600">{m.featured?"Unfeature":"Feature"}</button>
+                  <button onClick={()=>openEdit(m)} className="text-[11px] font-bold text-slate-400 hover:text-[#17458F] ml-auto">Edit</button>
+                  <button onClick={()=>delMember(m.id,m.name)} className="text-[11px] font-bold text-slate-400 hover:text-red-500">Delete</button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <footer className="max-w-6xl mx-auto px-4 mt-16 pt-6 border-t border-slate-200 text-center">
+        <p className="text-xs text-slate-400">RBN — Rotary Business Network · Concept v0.1 · Seed data is a placeholder, replace via Admin</p>
+      </footer>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
