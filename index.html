@@ -25,7 +25,7 @@
 <script type="text/babel">
 
 /* ═══════════════════════════════════════════════════════
-   FIREBASE — shared fintech-nd project, new isolated path
+   FIREBASE — shared fintech-nd project, isolated paths
 ═══════════════════════════════════════════════════════ */
 const FIREBASE_CONFIG = {
   apiKey:            "AIzaSyBJcohYrAYOMn-C_qdbPXMwOeMyGy8Sw1M",
@@ -38,7 +38,8 @@ const FIREBASE_CONFIG = {
 };
 firebase.initializeApp(FIREBASE_CONFIG);
 const DB = firebase.database();
-const DB_PATH = "rotarybiz/v1";
+const MEMBERS_PATH  = "rotarybiz/v1/members";
+const REQUESTS_PATH = "rotarybiz/v1/requests";
 const ADMIN_PIN = "1234"; // change before real launch
 
 const { useState, useEffect, useMemo } = React;
@@ -51,8 +52,10 @@ const toArr = (v) => {
   return [];
 };
 const uid = () => Math.random().toString(36).slice(2,9);
-const waLink = (phone, name) => `https://wa.me/91${String(phone).replace(/\D/g,"").slice(-10)}?text=${encodeURIComponent(`Hi ${name}, connecting with you via Rotary Business Network 🤝`)}`;
+const waLink = (phone, text) => `https://wa.me/91${String(phone).replace(/\D/g,"").slice(-10)}?text=${encodeURIComponent(text)}`;
 const telLink = (phone) => `tel:+91${String(phone).replace(/\D/g,"").slice(-10)}`;
+const dateStr = () => new Date().toISOString().split("T")[0];
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"}) : "—";
 
 const CATEGORIES = [
   "Manufacturing & Industrial","Trading & Retail","Healthcare & Pharma","Finance, Insurance & CA",
@@ -61,8 +64,14 @@ const CATEGORIES = [
   "Media & Advertising","Consulting","Others"
 ];
 
+const REQUEST_TYPES = [
+  "Looking for Service","Looking to Buy","Excess Stock / Selling",
+  "Partnership / Investment","Job Referral","Other"
+];
+const URGENCY = ["Immediate","This month","Anytime"];
+
 /* ── seed / sample data (placeholder — replace via Admin) ── */
-const SEED = [
+const SEED_MEMBERS = [
   {id:uid(), name:"Rtn. Anil Poddar", businessName:"Poddar Steel Traders", category:"Trading & Retail", subCategory:"Steel & Hardware", city:"Patna", club:"RC Patna Central", tags:["steel","hardware","wholesale"], offer:"TMT bars, structural steel, hardware supply at wholesale rates", need:"Looking for logistics/transport partners", phone:"9835000001", verified:true, featured:true},
   {id:uid(), name:"Rtn. Dr. Pritam Jha", businessName:"Jha Diagnostics & Path Lab", category:"Healthcare & Pharma", subCategory:"Diagnostics", city:"Patna", club:"RC Patna Central", tags:["pathology","diagnostics","health checkup"], offer:"Full-body checkups, home sample collection, corporate health packages", need:"Referrals for corporate tie-ups", phone:"9835000002", verified:true, featured:false},
   {id:uid(), name:"Rtn. Chintaan Jain", businessName:"Jain & Associates", category:"Finance, Insurance & CA", subCategory:"Chartered Accountancy", city:"Patna", club:"RC Patna Central", tags:["ca","gst","audit","tax planning"], offer:"GST filing, audits, tax planning for SMEs", need:"Clients needing statutory audit or GST registration", phone:"9835000003", verified:false, featured:false},
@@ -70,6 +79,8 @@ const SEED = [
   {id:uid(), name:"Rtn. Ayush Bhartia", businessName:"Bhartia InfoTech", category:"IT & Technology", subCategory:"Web & App Development", city:"Patna", club:"RC Patna Central", tags:["website","app development","software"], offer:"Custom websites, mobile apps, business automation tools", need:"Members needing digital presence or CRM systems", phone:"9835000005", verified:false, featured:true},
   {id:uid(), name:"Rtn. Suraj Agarwal", businessName:"Agarwal Event Studio", category:"Hospitality & Events", subCategory:"Event Management", city:"Patna", club:"RC Patna Central", tags:["events","weddings","catering"], offer:"Wedding planning, corporate events, catering coordination", need:"Photographers and decorators for empanelment", phone:"9835000006", verified:false, featured:false},
 ];
+
+const SEED_REQUESTS = [];
 
 /* ══════════════════════════════════
    SMALL UI PRIMITIVES
@@ -117,8 +128,7 @@ function Confirm({open,msg,onOk,onCancel}) {
   );
 }
 
-/* Signature motif: interlocking-circles mark used as a small eyebrow / divider device
-   (abstract "connection" glyph — not the Rotary emblem itself) */
+/* Signature motif: interlocking-circles used as eyebrow / divider device */
 function LinkMark({size=18, color="#17458F"}) {
   return (
     <svg width={size} height={size} viewBox="0 0 32 20" fill="none">
@@ -132,49 +142,74 @@ const BLANK_MEMBER = () => ({
   name:"", businessName:"", category:CATEGORIES[0], subCategory:"", city:"",
   club:"", tags:"", offer:"", need:"", phone:"", verified:false, featured:false
 });
+const BLANK_REQUEST = () => ({
+  memberId:"", type:REQUEST_TYPES[0], urgency:URGENCY[2], title:"", details:""
+});
 
 /* ══════════════════════════════════
    MAIN APP
 ══════════════════════════════════ */
 function App() {
   const [members, setMembers]   = useState([]);
+  const [requests,setRequests]  = useState([]);
   const [loaded,  setLoaded]    = useState(false);
   const [syncSt,  setSyncSt]    = useState("connecting");
 
+  const [tab,       setTab]     = useState("directory"); // 'directory' | 'requests'
+
+  /* directory filters */
   const [q,        setQ]        = useState("");
   const [catFilter,setCatFilter]= useState("all");
   const [cityFilter,setCityFilter]=useState("all");
   const [featOnly, setFeatOnly] = useState(false);
 
+  /* request filters */
+  const [reqTypeFilter, setReqTypeFilter] = useState("all");
+  const [reqStatusFilter, setReqStatusFilter] = useState("open"); // open | all | fulfilled
+
   const [isAdmin,  setIsAdmin]  = useState(false);
   const [pinModal, setPinModal] = useState(false);
   const [pinInput, setPinInput] = useState("");
 
-  const [modal,    setModal]    = useState(null); // 'member'
+  const [modal,    setModal]    = useState(null); // 'member' | 'request'
   const [form,     setForm]     = useState(BLANK_MEMBER());
   const [editId,   setEditId]   = useState(null);
+  const [rForm,    setRForm]    = useState(BLANK_REQUEST());
   const [confirm,  setConfirm]  = useState(null);
   const [toast,    setToast]    = useState(null);
 
   useEffect(() => {
-    const ref = DB.ref(DB_PATH);
-    ref.on("value", snap => {
+    let gotMembers=false, gotRequests=false;
+    const check = () => { if (gotMembers && gotRequests) { setLoaded(true); setSyncSt("synced"); } };
+
+    const mRef = DB.ref(MEMBERS_PATH);
+    mRef.on("value", snap => {
       try {
         const raw = snap.val();
-        if (raw === null) {
-          ref.set(SEED).catch(console.error);
-        } else {
-          setMembers(toArr(raw));
-          setLoaded(true); setSyncSt("synced");
-        }
+        if (raw === null) { mRef.set(SEED_MEMBERS).catch(console.error); }
+        else { setMembers(toArr(raw)); gotMembers=true; check(); }
       } catch(e){ console.error(e); setSyncSt("error"); setLoaded(true); }
     }, e => { console.error(e); setSyncSt("error"); setLoaded(true); });
-    return () => ref.off();
+
+    const rRef = DB.ref(REQUESTS_PATH);
+    rRef.on("value", snap => {
+      try {
+        const raw = snap.val();
+        if (raw === null) { rRef.set(SEED_REQUESTS).catch(console.error); gotRequests=true; check(); }
+        else { setRequests(toArr(raw)); gotRequests=true; check(); }
+      } catch(e){ console.error(e); setSyncSt("error"); setLoaded(true); }
+    }, e => { console.error(e); setSyncSt("error"); setLoaded(true); });
+
+    return () => { mRef.off(); rRef.off(); };
   }, []);
 
-  const save = (list) => {
+  const saveMembers = (list) => {
     setSyncSt("saving");
-    DB.ref(DB_PATH).set(list).then(()=>setSyncSt("synced")).catch(e=>{console.error(e);setSyncSt("error");});
+    DB.ref(MEMBERS_PATH).set(list).then(()=>setSyncSt("synced")).catch(e=>{console.error(e);setSyncSt("error");});
+  };
+  const saveRequests = (list) => {
+    setSyncSt("saving");
+    DB.ref(REQUESTS_PATH).set(list).then(()=>setSyncSt("synced")).catch(e=>{console.error(e);setSyncSt("error");});
   };
   const notify = (msg,c="green") => { setToast({msg,c}); setTimeout(()=>setToast(null),2400); };
 
@@ -185,10 +220,10 @@ function App() {
   };
   const exitAdmin = () => setIsAdmin(false);
 
-  /* ── derived lists ── */
+  /* ── derived ── */
   const cities = useMemo(()=>[...new Set(members.map(m=>m.city).filter(Boolean))].sort(),[members]);
 
-  const filtered = useMemo(() => {
+  const filteredMembers = useMemo(() => {
     const term = q.trim().toLowerCase();
     return members.filter(m => {
       if (catFilter!=="all" && m.category!==catFilter) return false;
@@ -200,7 +235,18 @@ function App() {
     }).sort((a,b)=> (b.featured?1:0)-(a.featured?1:0));
   }, [members, q, catFilter, cityFilter, featOnly]);
 
-  /* ── CRUD ── */
+  const filteredRequests = useMemo(() => {
+    return requests.filter(r => {
+      if (reqTypeFilter!=="all" && r.type!==reqTypeFilter) return false;
+      if (reqStatusFilter==="open" && r.status==="fulfilled") return false;
+      if (reqStatusFilter==="fulfilled" && r.status!=="fulfilled") return false;
+      return true;
+    }).sort((a,b)=> new Date(b.postedAt) - new Date(a.postedAt));
+  }, [requests, reqTypeFilter, reqStatusFilter]);
+
+  const openReqCount = requests.filter(r=>r.status!=="fulfilled").length;
+
+  /* ── member CRUD ── */
   const openAdd  = () => { setForm(BLANK_MEMBER()); setEditId(null); setModal("member"); };
   const openEdit = (m) => { setForm({...m, tags:(m.tags||[]).join(", ")}); setEditId(m.id); setModal("member"); };
   const closeModal = () => setModal(null);
@@ -211,17 +257,40 @@ function App() {
       ...form, id: editId || uid(),
       tags: form.tags.split(",").map(t=>t.trim()).filter(Boolean),
     };
-    if (editId) { save(members.map(m=>m.id===editId?entry:m)); notify("Member updated"); }
-    else        { save([...members, entry]); notify("Member added"); }
+    if (editId) { saveMembers(members.map(m=>m.id===editId?entry:m)); notify("Member updated"); }
+    else        { saveMembers([...members, entry]); notify("Member added"); }
     closeModal();
   };
 
   const delMember = (id, name) => setConfirm({
     msg: `Remove "${name}" from the network?`,
-    onOk: () => { save(members.filter(m=>m.id!==id)); setConfirm(null); notify("Removed","red"); }
+    onOk: () => { saveMembers(members.filter(m=>m.id!==id)); setConfirm(null); notify("Removed","red"); }
   });
 
-  const toggleFlag = (id, key) => save(members.map(m=>m.id===id?{...m,[key]:!m[key]}:m));
+  const toggleFlag = (id, key) => saveMembers(members.map(m=>m.id===id?{...m,[key]:!m[key]}:m));
+
+  /* ── request CRUD (open posting — no PIN) ── */
+  const openPostRequest = () => { setRForm(BLANK_REQUEST()); setModal("request"); };
+  const closeRequestModal = () => setModal(null);
+
+  const submitRequest = () => {
+    if (!rForm.memberId || !rForm.title.trim()) return;
+    const m = members.find(x=>x.id===rForm.memberId);
+    if (!m) return;
+    const entry = {
+      id: uid(), memberId: m.id, memberName: m.name, businessName: m.businessName, phone: m.phone,
+      type: rForm.type, urgency: rForm.urgency, title: rForm.title.trim(), details: rForm.details.trim(),
+      status: "open", postedAt: dateStr()
+    };
+    saveRequests([entry, ...requests]);
+    notify("Request posted!"); closeRequestModal();
+  };
+
+  const toggleFulfilled = (id) => saveRequests(requests.map(r=>r.id===id?{...r,status:r.status==="fulfilled"?"open":"fulfilled"}:r));
+  const delRequest = (id, title) => setConfirm({
+    msg: `Delete request "${title}"?`,
+    onOk: () => { saveRequests(requests.filter(r=>r.id!==id)); setConfirm(null); notify("Request deleted","red"); }
+  });
 
   /* ══════════════════════════════════
      LOADING
@@ -245,7 +314,7 @@ function App() {
 
       {/* ── HEADER ── */}
       <header className="bg-[#17458F] text-white">
-        <div className="max-w-6xl mx-auto px-4 pt-6 pb-8">
+        <div className="max-w-6xl mx-auto px-4 pt-6 pb-5">
           <div className="flex items-center justify-between flex-wrap gap-4">
             <div className="flex items-center gap-3">
               <LinkMark size={30} color="#FFFFFF"/>
@@ -260,32 +329,58 @@ function App() {
                 {syncSt==="synced"?"● Live":syncSt==="saving"?"⟳ Saving":"✕ Error"}
               </span>
               {isAdmin ? (
-                <>
-                  <button onClick={openAdd} className="bg-[#F7A81B] hover:bg-[#e29a12] text-[#17458F] px-3.5 py-1.5 rounded-lg text-xs font-bold">+ Add Member</button>
-                  <button onClick={exitAdmin} className="bg-white/10 hover:bg-white/20 px-3.5 py-1.5 rounded-lg text-xs font-bold">Exit Admin</button>
-                </>
+                <button onClick={exitAdmin} className="bg-white/10 hover:bg-white/20 px-3.5 py-1.5 rounded-lg text-xs font-bold">Exit Admin</button>
               ) : (
                 <button onClick={()=>setPinModal(true)} className="bg-white/10 hover:bg-white/20 px-3.5 py-1.5 rounded-lg text-xs font-bold">🔒 Admin</button>
               )}
             </div>
           </div>
 
-          <div className="mt-6 flex flex-col md:flex-row gap-3">
-            <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search by name, business, service, tag…"
-              className="flex-1 px-4 py-3 rounded-xl text-sm text-slate-800 ring-focus focus:outline-none"/>
-            <select value={catFilter} onChange={e=>setCatFilter(e.target.value)} className="px-3 py-3 rounded-xl text-sm text-slate-700 md:w-56">
-              <option value="all">All categories</option>
-              {CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}
-            </select>
-            <select value={cityFilter} onChange={e=>setCityFilter(e.target.value)} className="px-3 py-3 rounded-xl text-sm text-slate-700 md:w-40">
-              <option value="all">All cities</option>
-              {cities.map(c=><option key={c} value={c}>{c}</option>)}
-            </select>
-            <label className="flex items-center gap-2 bg-white/10 px-3.5 rounded-xl text-xs font-semibold whitespace-nowrap cursor-pointer">
-              <input type="checkbox" checked={featOnly} onChange={e=>setFeatOnly(e.target.checked)} className="w-4 h-4"/>
-              ⭐ Featured only
-            </label>
+          {/* ── TOP-LEVEL TABS ── */}
+          <div className="mt-5 flex gap-1 bg-white/10 p-1 rounded-xl w-fit">
+            <button onClick={()=>setTab("directory")} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${tab==="directory"?"bg-white text-[#17458F]":"text-white/70 hover:text-white"}`}>📇 Directory</button>
+            <button onClick={()=>setTab("requests")} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors relative ${tab==="requests"?"bg-white text-[#17458F]":"text-white/70 hover:text-white"}`}>
+              🙋 Requests
+              {openReqCount>0 && <span className={`ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full font-bold ${tab==="requests"?"bg-[#F7A81B] text-white":"bg-[#F7A81B] text-[#17458F]"}`}>{openReqCount}</span>}
+            </button>
           </div>
+
+          {/* ── DIRECTORY SEARCH/FILTER BAR ── */}
+          {tab==="directory" && (
+            <div className="mt-4 flex flex-col md:flex-row gap-3">
+              <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search by name, business, service, tag…"
+                className="flex-1 px-4 py-3 rounded-xl text-sm text-slate-800 ring-focus focus:outline-none"/>
+              <select value={catFilter} onChange={e=>setCatFilter(e.target.value)} className="px-3 py-3 rounded-xl text-sm text-slate-700 md:w-56">
+                <option value="all">All categories</option>
+                {CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}
+              </select>
+              <select value={cityFilter} onChange={e=>setCityFilter(e.target.value)} className="px-3 py-3 rounded-xl text-sm text-slate-700 md:w-40">
+                <option value="all">All cities</option>
+                {cities.map(c=><option key={c} value={c}>{c}</option>)}
+              </select>
+              <label className="flex items-center gap-2 bg-white/10 px-3.5 rounded-xl text-xs font-semibold whitespace-nowrap cursor-pointer">
+                <input type="checkbox" checked={featOnly} onChange={e=>setFeatOnly(e.target.checked)} className="w-4 h-4"/>
+                ⭐ Featured only
+              </label>
+              {isAdmin && <button onClick={openAdd} className="bg-[#F7A81B] hover:bg-[#e29a12] text-[#17458F] px-4 py-3 rounded-xl text-sm font-bold whitespace-nowrap">+ Add Member</button>}
+            </div>
+          )}
+
+          {/* ── REQUESTS FILTER BAR ── */}
+          {tab==="requests" && (
+            <div className="mt-4 flex flex-col md:flex-row gap-3">
+              <select value={reqTypeFilter} onChange={e=>setReqTypeFilter(e.target.value)} className="px-3 py-3 rounded-xl text-sm text-slate-700 md:w-56">
+                <option value="all">All request types</option>
+                {REQUEST_TYPES.map(t=><option key={t} value={t}>{t}</option>)}
+              </select>
+              <div className="flex gap-1 bg-white/10 p-1 rounded-xl w-fit">
+                {[["open","Open"],["fulfilled","Fulfilled"],["all","All"]].map(([v,l])=>(
+                  <button key={v} onClick={()=>setReqStatusFilter(v)} className={`px-3.5 py-1.5 rounded-lg text-xs font-bold ${reqStatusFilter===v?"bg-white text-[#17458F]":"text-white/70 hover:text-white"}`}>{l}</button>
+                ))}
+              </div>
+              <button onClick={openPostRequest} className="ml-auto bg-[#F7A81B] hover:bg-[#e29a12] text-[#17458F] px-4 py-3 rounded-xl text-sm font-bold whitespace-nowrap">+ Post a Request</button>
+            </div>
+          )}
         </div>
       </header>
 
@@ -333,71 +428,158 @@ function App() {
         </div>
       </Modal>
 
-      {/* ── DIRECTORY ── */}
-      <div className="max-w-6xl mx-auto px-4 mt-6">
-        <div className="flex items-center justify-between mb-4">
-          <p className="text-sm text-slate-500 font-medium">{filtered.length} of {members.length} members</p>
-          {isAdmin && <p className="text-xs text-[#17458F] font-bold bg-[#17458F]/10 px-3 py-1 rounded-full">Admin mode — edit controls visible</p>}
-        </div>
-
-        {filtered.length===0 && (
-          <div className="text-center py-24">
-            <LinkMark size={32}/>
-            <p className="text-slate-400 font-semibold mt-3">No members match this search yet.</p>
-            <p className="text-slate-300 text-sm mt-1">Try a different keyword or clear filters.</p>
+      {/* ── POST REQUEST (open to all, no PIN) ── */}
+      <Modal open={modal==="request"} onClose={closeRequestModal} title="🙋 Post a Request">
+        <div className="space-y-4">
+          <Fld label="Who is this from? *">
+            <select value={rForm.memberId} onChange={e=>setRForm({...rForm,memberId:e.target.value})} className={INP}>
+              <option value="">— Select your profile —</option>
+              {members.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(m=><option key={m.id} value={m.id}>{m.name} — {m.businessName}</option>)}
+            </select>
+            <p className="text-xs text-slate-400 mt-1">Not listed yet? Ask Admin to add your profile first.</p>
+          </Fld>
+          <div className="grid grid-cols-2 gap-3">
+            <Fld label="Request type">
+              <select value={rForm.type} onChange={e=>setRForm({...rForm,type:e.target.value})} className={INP}>
+                {REQUEST_TYPES.map(t=><option key={t}>{t}</option>)}
+              </select>
+            </Fld>
+            <Fld label="Urgency">
+              <select value={rForm.urgency} onChange={e=>setRForm({...rForm,urgency:e.target.value})} className={INP}>
+                {URGENCY.map(u=><option key={u}>{u}</option>)}
+              </select>
+            </Fld>
           </div>
-        )}
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.map(m => (
-            <div key={m.id} className={`bg-white rounded-2xl border shadow-sm hover:shadow-md transition-shadow p-5 flex flex-col
-              ${m.featured?"border-[#F7A81B] ring-1 ring-[#F7A81B]/40":"border-slate-100"}`}>
-
-              <div className="flex items-start justify-between gap-2 mb-2">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-[#17458F]">
-                    <LinkMark size={12}/> {m.category}{m.subCategory?` · ${m.subCategory}`:""}
-                  </div>
-                  <h3 className="disp font-bold text-slate-900 mt-1 truncate">{m.businessName}</h3>
-                  <p className="text-xs text-slate-400 truncate">{m.name} {m.club?`· ${m.club}`:""}</p>
-                </div>
-                {m.featured && <span className="text-[10px] font-bold bg-[#F7A81B]/15 text-[#a6740c] px-2 py-1 rounded-full whitespace-nowrap">⭐ Featured</span>}
-              </div>
-
-              <div className="flex items-center gap-2 mb-3">
-                {m.verified && <span className="text-[10px] font-bold bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full">✓ Verified</span>}
-                {m.city && <span className="text-[10px] font-bold bg-slate-50 text-slate-500 px-2 py-0.5 rounded-full">📍 {m.city}</span>}
-              </div>
-
-              {m.offer && <p className="text-sm text-slate-600 mb-2"><span className="font-bold text-slate-400 text-xs uppercase tracking-wide block mb-0.5">Offers</span>{m.offer}</p>}
-              {m.need &&  <p className="text-sm text-slate-600 mb-3"><span className="font-bold text-slate-400 text-xs uppercase tracking-wide block mb-0.5">Looking for</span>{m.need}</p>}
-
-              {(m.tags||[]).length>0 && (
-                <div className="flex flex-wrap gap-1.5 mb-4">
-                  {m.tags.map(t=><span key={t} className="text-[10px] font-semibold bg-[#17458F]/5 text-[#17458F] px-2 py-0.5 rounded-full">{t}</span>)}
-                </div>
-              )}
-
-              <div className="mt-auto flex gap-2 pt-2">
-                <a href={telLink(m.phone)} className="flex-1 text-center py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold">📞 Call</a>
-                <a href={waLink(m.phone, m.name)} target="_blank" rel="noopener" className="flex-1 text-center py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-xs font-bold">💬 WhatsApp</a>
-              </div>
-
-              {isAdmin && (
-                <div className="flex gap-2 pt-3 mt-3 border-t border-slate-50">
-                  <button onClick={()=>toggleFlag(m.id,"verified")} className="text-[11px] font-bold text-slate-400 hover:text-emerald-600">{m.verified?"Unverify":"Verify"}</button>
-                  <button onClick={()=>toggleFlag(m.id,"featured")} className="text-[11px] font-bold text-slate-400 hover:text-amber-600">{m.featured?"Unfeature":"Feature"}</button>
-                  <button onClick={()=>openEdit(m)} className="text-[11px] font-bold text-slate-400 hover:text-[#17458F] ml-auto">Edit</button>
-                  <button onClick={()=>delMember(m.id,m.name)} className="text-[11px] font-bold text-slate-400 hover:text-red-500">Delete</button>
-                </div>
-              )}
-            </div>
-          ))}
+          <Fld label="Title *"><input value={rForm.title} onChange={e=>setRForm({...rForm,title:e.target.value})} placeholder="e.g. Need a packaging vendor in Patna" className={INP}/></Fld>
+          <Fld label="Details"><textarea value={rForm.details} onChange={e=>setRForm({...rForm,details:e.target.value})} rows={3} placeholder="Add specifics — quantity, timeline, budget…" className={INP}/></Fld>
+          <div className="flex gap-3 pt-2 border-t border-slate-100">
+            <button onClick={closeRequestModal} className="flex-1 py-2.5 bg-slate-100 text-slate-700 rounded-xl text-sm font-bold hover:bg-slate-200">Cancel</button>
+            <button onClick={submitRequest} disabled={!rForm.memberId||!rForm.title.trim()}
+              className="flex-1 py-2.5 bg-[#17458F] text-white rounded-xl text-sm font-bold hover:bg-[#123a78] disabled:opacity-40">Post Request</button>
+          </div>
         </div>
-      </div>
+      </Modal>
+
+      {/* ══════════════════════════════════
+          DIRECTORY TAB
+      ══════════════════════════════════ */}
+      {tab==="directory" && (
+        <div className="max-w-6xl mx-auto px-4 mt-6">
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-sm text-slate-500 font-medium">{filteredMembers.length} of {members.length} members</p>
+            {isAdmin && <p className="text-xs text-[#17458F] font-bold bg-[#17458F]/10 px-3 py-1 rounded-full">Admin mode — edit controls visible</p>}
+          </div>
+
+          {filteredMembers.length===0 && (
+            <div className="text-center py-24">
+              <LinkMark size={32}/>
+              <p className="text-slate-400 font-semibold mt-3">No members match this search yet.</p>
+              <p className="text-slate-300 text-sm mt-1">Try a different keyword or clear filters.</p>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredMembers.map(m => (
+              <div key={m.id} className={`bg-white rounded-2xl border shadow-sm hover:shadow-md transition-shadow p-5 flex flex-col
+                ${m.featured?"border-[#F7A81B] ring-1 ring-[#F7A81B]/40":"border-slate-100"}`}>
+
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-[#17458F]">
+                      <LinkMark size={12}/> {m.category}{m.subCategory?` · ${m.subCategory}`:""}
+                    </div>
+                    <h3 className="disp font-bold text-slate-900 mt-1 truncate">{m.businessName}</h3>
+                    <p className="text-xs text-slate-400 truncate">{m.name} {m.club?`· ${m.club}`:""}</p>
+                  </div>
+                  {m.featured && <span className="text-[10px] font-bold bg-[#F7A81B]/15 text-[#a6740c] px-2 py-1 rounded-full whitespace-nowrap">⭐ Featured</span>}
+                </div>
+
+                <div className="flex items-center gap-2 mb-3">
+                  {m.verified && <span className="text-[10px] font-bold bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full">✓ Verified</span>}
+                  {m.city && <span className="text-[10px] font-bold bg-slate-50 text-slate-500 px-2 py-0.5 rounded-full">📍 {m.city}</span>}
+                </div>
+
+                {m.offer && <p className="text-sm text-slate-600 mb-2"><span className="font-bold text-slate-400 text-xs uppercase tracking-wide block mb-0.5">Offers</span>{m.offer}</p>}
+                {m.need &&  <p className="text-sm text-slate-600 mb-3"><span className="font-bold text-slate-400 text-xs uppercase tracking-wide block mb-0.5">Looking for</span>{m.need}</p>}
+
+                {(m.tags||[]).length>0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-4">
+                    {m.tags.map(t=><span key={t} className="text-[10px] font-semibold bg-[#17458F]/5 text-[#17458F] px-2 py-0.5 rounded-full">{t}</span>)}
+                  </div>
+                )}
+
+                <div className="mt-auto flex gap-2 pt-2">
+                  <a href={telLink(m.phone)} className="flex-1 text-center py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold">📞 Call</a>
+                  <a href={waLink(m.phone, `Hi ${m.name}, connecting with you via Rotary Business Network 🤝`)} target="_blank" rel="noopener" className="flex-1 text-center py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-xs font-bold">💬 WhatsApp</a>
+                </div>
+
+                {isAdmin && (
+                  <div className="flex gap-2 pt-3 mt-3 border-t border-slate-50">
+                    <button onClick={()=>toggleFlag(m.id,"verified")} className="text-[11px] font-bold text-slate-400 hover:text-emerald-600">{m.verified?"Unverify":"Verify"}</button>
+                    <button onClick={()=>toggleFlag(m.id,"featured")} className="text-[11px] font-bold text-slate-400 hover:text-amber-600">{m.featured?"Unfeature":"Feature"}</button>
+                    <button onClick={()=>openEdit(m)} className="text-[11px] font-bold text-slate-400 hover:text-[#17458F] ml-auto">Edit</button>
+                    <button onClick={()=>delMember(m.id,m.name)} className="text-[11px] font-bold text-slate-400 hover:text-red-500">Delete</button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════
+          REQUESTS TAB
+      ══════════════════════════════════ */}
+      {tab==="requests" && (
+        <div className="max-w-4xl mx-auto px-4 mt-6">
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-sm text-slate-500 font-medium">{filteredRequests.length} request{filteredRequests.length!==1?"s":""}</p>
+            {isAdmin && <p className="text-xs text-[#17458F] font-bold bg-[#17458F]/10 px-3 py-1 rounded-full">Admin mode — delete controls visible</p>}
+          </div>
+
+          {filteredRequests.length===0 && (
+            <div className="text-center py-24">
+              <LinkMark size={32}/>
+              <p className="text-slate-400 font-semibold mt-3">No requests here yet.</p>
+              <p className="text-slate-300 text-sm mt-1">Be the first to post what you need.</p>
+            </div>
+          )}
+
+          <div className="space-y-3">
+            {filteredRequests.map(r => (
+              <div key={r.id} className={`bg-white rounded-2xl border shadow-sm p-5 ${r.status==="fulfilled"?"border-slate-100 opacity-60":"border-slate-100"}`}>
+                <div className="flex items-start justify-between gap-3 mb-2 flex-wrap">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-[#17458F] bg-[#17458F]/5 px-2 py-1 rounded-full">{r.type}</span>
+                    <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full
+                      ${r.urgency==="Immediate"?"bg-red-50 text-red-600":r.urgency==="This month"?"bg-amber-50 text-amber-600":"bg-slate-50 text-slate-500"}`}>{r.urgency}</span>
+                    {r.status==="fulfilled" && <span className="text-[10px] font-bold uppercase tracking-widest bg-emerald-50 text-emerald-600 px-2 py-1 rounded-full">✓ Fulfilled</span>}
+                  </div>
+                  <span className="text-xs text-slate-300 whitespace-nowrap">{fmtDate(r.postedAt)}</span>
+                </div>
+
+                <h3 className="disp font-bold text-slate-900 text-lg mb-1">{r.title}</h3>
+                {r.details && <p className="text-sm text-slate-600 mb-3">{r.details}</p>}
+
+                <p className="text-xs text-slate-400 mb-3">Posted by <span className="font-semibold text-slate-600">{r.memberName}</span> · {r.businessName}</p>
+
+                <div className="flex gap-2 flex-wrap">
+                  <a href={waLink(r.phone, `Hi ${r.memberName}, I saw your request on RBN — "${r.title}". I might be able to help.`)}
+                    target="_blank" rel="noopener" className="flex-1 min-w-[140px] text-center py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-xs font-bold">🙋 I can help</a>
+                  <a href={telLink(r.phone)} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold">📞 Call</a>
+                  <button onClick={()=>toggleFulfilled(r.id)} className="px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-500 rounded-lg text-xs font-bold">
+                    {r.status==="fulfilled"?"Reopen":"Mark Fulfilled"}
+                  </button>
+                  {isAdmin && <button onClick={()=>delRequest(r.id,r.title)} className="px-3 py-2 text-red-400 hover:text-red-600 text-xs font-bold">Delete</button>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <footer className="max-w-6xl mx-auto px-4 mt-16 pt-6 border-t border-slate-200 text-center">
-        <p className="text-xs text-slate-400">RBN — Rotary Business Network · Concept v0.1 · Seed data is a placeholder, replace via Admin</p>
+        <p className="text-xs text-slate-400">RBN — Rotary Business Network · Concept v0.2 · Seed data is a placeholder, replace via Admin</p>
       </footer>
     </div>
   );
