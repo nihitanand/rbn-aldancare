@@ -239,11 +239,12 @@ function LinkMark({size=18, color="#17458F"}) {
 
 const BLANK_MEMBER = () => ({
   name:"", businessName:"", category:CATEGORIES[0], subCategory:"", city:"",
-  club:"", tags:"", offer:"", need:"", phone:"", verified:false, featured:false,
+  club:"", clubName:"", clubNo:"", districtNo:"", tags:"", offer:"", need:"", phone:"", verified:false, featured:false,
   profileConfirmed:false, newMember2627:false
 });
 const BLANK_REQUEST = () => ({
-  memberId:"", type:REQUEST_TYPES[0], urgency:URGENCY[2], title:"", details:""
+  posterType:"member", memberId:"", nonMemberName:"", nonMemberPhone:"",
+  type:REQUEST_TYPES[0], urgency:URGENCY[2], title:"", details:""
 });
 
 /* ══════════════════════════════════
@@ -280,6 +281,7 @@ function App() {
   const [form,     setForm]     = useState(BLANK_MEMBER());
   const [editId,   setEditId]   = useState(null);
   const [rForm,    setRForm]    = useState(BLANK_REQUEST());
+  const [memberSearch, setMemberSearch] = useState("");
   const [confirm,  setConfirm]  = useState(null);
   const [toast,    setToast]    = useState(null);
 
@@ -327,6 +329,12 @@ function App() {
 
   /* ── derived ── */
   const cities = useMemo(()=>[...new Set(members.map(m=>m.city).filter(Boolean))].sort(),[members]);
+
+  const memberSearchResults = useMemo(() => {
+    const term = memberSearch.trim().toLowerCase();
+    if (!term) return members.slice(0,8).sort((a,b)=>a.name.localeCompare(b.name));
+    return members.filter(m => [m.name,m.businessName,m.clubName,m.clubNo,m.districtNo].join(" ").toLowerCase().includes(term)).slice(0,20);
+  }, [members, memberSearch]);
 
   const filteredMembers = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -401,18 +409,31 @@ function App() {
   };
 
   /* ── request CRUD (open posting — no PIN) ── */
-  const openPostRequest = () => { setRForm(BLANK_REQUEST()); setModal("request"); };
+  const openPostRequest = () => { setRForm(BLANK_REQUEST()); setMemberSearch(""); setModal("request"); };
   const closeRequestModal = () => setModal(null);
 
   const submitRequest = () => {
-    if (!rForm.memberId || !rForm.title.trim()) return;
-    const m = members.find(x=>x.id===rForm.memberId);
-    if (!m) return;
-    const entry = {
-      id: uid(), memberId: m.id, memberName: m.name, businessName: m.businessName, phone: m.phone,
-      type: rForm.type, urgency: rForm.urgency, title: rForm.title.trim(), details: rForm.details.trim(),
-      status: "open", postedAt: dateStr()
-    };
+    if (!rForm.title.trim()) return;
+    let entry;
+    if (rForm.posterType==="member") {
+      if (!rForm.memberId) return;
+      const m = members.find(x=>x.id===rForm.memberId);
+      if (!m) return;
+      entry = {
+        id: uid(), posterType:"member", memberId: m.id, memberName: m.name, businessName: m.businessName, phone: m.phone,
+        clubName: m.clubName, clubNo: m.clubNo, districtNo: m.districtNo,
+        type: rForm.type, urgency: rForm.urgency, title: rForm.title.trim(), details: rForm.details.trim(),
+        status: "open", postedAt: dateStr()
+      };
+    } else {
+      if (!rForm.nonMemberName.trim() || !rForm.nonMemberPhone.trim()) return;
+      entry = {
+        id: uid(), posterType:"non-member", memberId:"", memberName: rForm.nonMemberName.trim(), businessName:"Non-member", phone: rForm.nonMemberPhone.trim(),
+        clubName:"", clubNo:"", districtNo:"",
+        type: rForm.type, urgency: rForm.urgency, title: rForm.title.trim(), details: rForm.details.trim(),
+        status: "open", postedAt: dateStr()
+      };
+    }
     saveRequests([entry, ...requests]);
     notify("Request posted!"); closeRequestModal();
   };
@@ -560,6 +581,8 @@ function App() {
               <Fld label="Sub-category"><input value={claimForm.subCategory} onChange={e=>setClaimForm({...claimForm,subCategory:e.target.value})} className={INP}/></Fld>
               <Fld label="City"><input value={claimForm.city} onChange={e=>setClaimForm({...claimForm,city:e.target.value})} className={INP}/></Fld>
               <Fld label="Club"><input value={claimForm.club} onChange={e=>setClaimForm({...claimForm,club:e.target.value})} className={INP}/></Fld>
+              <Fld label="Club No."><input value={claimForm.clubNo} onChange={e=>setClaimForm({...claimForm,clubNo:e.target.value})} className={INP}/></Fld>
+              <Fld label="District No."><input value={claimForm.districtNo} onChange={e=>setClaimForm({...claimForm,districtNo:e.target.value})} className={INP}/></Fld>
               <div className="col-span-2"><Fld label="Tags (comma separated)"><input value={claimForm.tags} onChange={e=>setClaimForm({...claimForm,tags:e.target.value})} className={INP}/></Fld></div>
               <div className="col-span-2"><Fld label="What I offer"><textarea value={claimForm.offer} onChange={e=>setClaimForm({...claimForm,offer:e.target.value})} rows={2} className={INP}/></Fld></div>
               <div className="col-span-2"><Fld label="What I'm looking for"><textarea value={claimForm.need} onChange={e=>setClaimForm({...claimForm,need:e.target.value})} rows={2} className={INP}/></Fld></div>
@@ -587,6 +610,9 @@ function App() {
           <Fld label="Sub-category"><input value={form.subCategory} onChange={e=>setForm({...form,subCategory:e.target.value})} placeholder="e.g. Steel & Hardware" className={INP}/></Fld>
           <Fld label="City"><input value={form.city} onChange={e=>setForm({...form,city:e.target.value})} className={INP}/></Fld>
           <Fld label="Club"><input value={form.club} onChange={e=>setForm({...form,club:e.target.value})} placeholder="e.g. RC Patna Central" className={INP}/></Fld>
+          <Fld label="Club Name (full)"><input value={form.clubName} onChange={e=>setForm({...form,clubName:e.target.value})} placeholder="e.g. Rotary Club of Patna Millennium" className={INP}/></Fld>
+          <Fld label="Club No."><input value={form.clubNo} onChange={e=>setForm({...form,clubNo:e.target.value})} placeholder="225235" className={INP}/></Fld>
+          <Fld label="District No."><input value={form.districtNo} onChange={e=>setForm({...form,districtNo:e.target.value})} placeholder="3250" className={INP}/></Fld>
           <div className="col-span-2"><Fld label="Tags (comma separated)" hint="Used for search matching"><input value={form.tags} onChange={e=>setForm({...form,tags:e.target.value})} placeholder="gst, tax planning, audit" className={INP}/></Fld></div>
           <div className="col-span-2"><Fld label="What I offer"><textarea value={form.offer} onChange={e=>setForm({...form,offer:e.target.value})} rows={2} className={INP}/></Fld></div>
           <div className="col-span-2"><Fld label="What I'm looking for"><textarea value={form.need} onChange={e=>setForm({...form,need:e.target.value})} rows={2} className={INP}/></Fld></div>
@@ -616,15 +642,45 @@ function App() {
       </Modal>
 
       {/* ── POST REQUEST (open to all, no PIN) ── */}
-      <Modal open={modal==="request"} onClose={closeRequestModal} title="🙋 Post a Request">
+      <Modal open={modal==="request"} onClose={closeRequestModal} title="🙋 Post a Request" wide>
         <div className="space-y-4">
-          <Fld label="Who is this from? *">
-            <select value={rForm.memberId} onChange={e=>setRForm({...rForm,memberId:e.target.value})} className={INP}>
-              <option value="">— Select your profile —</option>
-              {members.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(m=><option key={m.id} value={m.id}>{m.name} — {m.businessName}</option>)}
-            </select>
-            <p className="text-xs text-slate-400 mt-1">Not listed yet? Ask Admin to add your profile first.</p>
+          <Fld label="Who is posting this? *">
+            <div className="flex gap-1 bg-slate-100 p-1 rounded-xl w-fit">
+              <button onClick={()=>setRForm({...rForm,posterType:"member"})} className={`px-4 py-1.5 rounded-lg text-sm font-bold ${rForm.posterType==="member"?"bg-white text-[#17458F] shadow-sm":"text-slate-500"}`}>Member</button>
+              <button onClick={()=>setRForm({...rForm,posterType:"non-member"})} className={`px-4 py-1.5 rounded-lg text-sm font-bold ${rForm.posterType==="non-member"?"bg-white text-[#17458F] shadow-sm":"text-slate-500"}`}>Non-Member</button>
+            </div>
           </Fld>
+
+          {rForm.posterType==="member" ? (
+            <Fld label="Search your profile *" hint="Search by name, business, or club — spans all clubs in the network">
+              <input value={memberSearch} onChange={e=>{setMemberSearch(e.target.value); setRForm({...rForm,memberId:""});}}
+                placeholder="Type your name…" className={INP}/>
+              {!rForm.memberId && (
+                <div className="mt-1.5 border border-slate-200 rounded-xl max-h-48 overflow-y-auto divide-y divide-slate-50">
+                  {memberSearchResults.length===0 && <p className="text-xs text-slate-400 p-3">No match — ask Admin to add your profile first.</p>}
+                  {memberSearchResults.map(m=>(
+                    <button key={m.id} onClick={()=>{setRForm({...rForm,memberId:m.id}); setMemberSearch(`${m.name} — ${m.businessName}`);}}
+                      className="w-full text-left px-3 py-2 hover:bg-slate-50 text-sm">
+                      <div className="font-semibold text-slate-700">{m.name} <span className="text-slate-400 font-normal">— {m.businessName}</span></div>
+                      <div className="text-[11px] text-slate-400">{m.clubName||"—"} {m.clubNo?`· Club No. ${m.clubNo}`:""} {m.districtNo?`· District ${m.districtNo}`:""}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {rForm.memberId && (
+                <div className="mt-1.5 flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">
+                  <span className="text-xs font-bold text-emerald-700">✓ Selected</span>
+                  <button onClick={()=>{setRForm({...rForm,memberId:""}); setMemberSearch("");}} className="text-xs font-bold text-slate-400 hover:text-red-500">Change</button>
+                </div>
+              )}
+            </Fld>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              <Fld label="Your Name *"><input value={rForm.nonMemberName} onChange={e=>setRForm({...rForm,nonMemberName:e.target.value})} placeholder="Full name" className={INP}/></Fld>
+              <Fld label="Your Phone *"><input value={rForm.nonMemberPhone} onChange={e=>setRForm({...rForm,nonMemberPhone:e.target.value})} placeholder="98350 00000" className={INP}/></Fld>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <Fld label="Request type">
               <select value={rForm.type} onChange={e=>setRForm({...rForm,type:e.target.value})} className={INP}>
@@ -641,7 +697,8 @@ function App() {
           <Fld label="Details"><textarea value={rForm.details} onChange={e=>setRForm({...rForm,details:e.target.value})} rows={3} placeholder="Add specifics — quantity, timeline, budget…" className={INP}/></Fld>
           <div className="flex gap-3 pt-2 border-t border-slate-100">
             <button onClick={closeRequestModal} className="flex-1 py-2.5 bg-slate-100 text-slate-700 rounded-xl text-sm font-bold hover:bg-slate-200">Cancel</button>
-            <button onClick={submitRequest} disabled={!rForm.memberId||!rForm.title.trim()}
+            <button onClick={submitRequest}
+              disabled={!rForm.title.trim() || (rForm.posterType==="member" ? !rForm.memberId : !(rForm.nonMemberName.trim()&&rForm.nonMemberPhone.trim()))}
               className="flex-1 py-2.5 bg-[#17458F] text-white rounded-xl text-sm font-bold hover:bg-[#123a78] disabled:opacity-40">Post Request</button>
           </div>
         </div>
