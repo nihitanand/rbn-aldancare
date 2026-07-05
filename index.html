@@ -248,6 +248,11 @@ const BLANK_MEMBER = () => ({
 });
 const BLANK_REQUEST = () => ({
   posterType:"member", memberId:"", nonMemberName:"", nonMemberPhone:"",
+  // targetType/targetMemberId: groundwork for future per-member login (mobile + PIN).
+  // Once that ships, "specific" targeted requests should route to that member's personal feed
+  // instead of (or in addition to) the shared public Requests feed. For now they still show
+  // publicly, just marked with a 🎯 badge so the intent is visible.
+  targetType:"everyone", targetMemberId:"",
   type:REQUEST_TYPES[0], urgency:URGENCY[2], title:"", details:""
 });
 
@@ -286,6 +291,7 @@ function App() {
   const [editId,   setEditId]   = useState(null);
   const [rForm,    setRForm]    = useState(BLANK_REQUEST());
   const [memberSearch, setMemberSearch] = useState("");
+  const [targetSearch, setTargetSearch] = useState("");
   const [confirm,  setConfirm]  = useState(null);
   const [toast,    setToast]    = useState(null);
 
@@ -339,6 +345,12 @@ function App() {
     if (!term) return members.slice(0,8).sort((a,b)=>a.name.localeCompare(b.name));
     return members.filter(m => [m.name,m.businessName,m.clubName,m.clubNo,m.districtNo].join(" ").toLowerCase().includes(term)).slice(0,20);
   }, [members, memberSearch]);
+
+  const targetSearchResults = useMemo(() => {
+    const term = targetSearch.trim().toLowerCase();
+    if (!term) return members.slice(0,8).sort((a,b)=>a.name.localeCompare(b.name));
+    return members.filter(m => [m.name,m.businessName,m.category,m.clubName,m.clubNo,m.districtNo].join(" ").toLowerCase().includes(term)).slice(0,20);
+  }, [members, targetSearch]);
 
   const filteredMembers = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -413,11 +425,16 @@ function App() {
   };
 
   /* ── request CRUD (open posting — no PIN) ── */
-  const openPostRequest = () => { setRForm(BLANK_REQUEST()); setMemberSearch(""); setModal("request"); };
+  const openPostRequest = () => { setRForm(BLANK_REQUEST()); setMemberSearch(""); setTargetSearch(""); setModal("request"); };
   const closeRequestModal = () => setModal(null);
 
   const submitRequest = () => {
     if (!rForm.title.trim()) return;
+    if (rForm.targetType==="specific" && !rForm.targetMemberId) return;
+    const target = rForm.targetType==="specific" ? members.find(x=>x.id===rForm.targetMemberId) : null;
+    const targetInfo = target
+      ? { targetType:"specific", targetMemberId: target.id, targetMemberName: target.name }
+      : { targetType:"everyone", targetMemberId:"", targetMemberName:"" };
     let entry;
     if (rForm.posterType==="member") {
       if (!rForm.memberId) return;
@@ -425,7 +442,7 @@ function App() {
       if (!m) return;
       entry = {
         id: uid(), posterType:"member", memberId: m.id, memberName: m.name, businessName: m.businessName, category: m.category, phone: m.phone,
-        clubName: m.clubName, clubNo: m.clubNo, districtNo: m.districtNo,
+        clubName: m.clubName, clubNo: m.clubNo, districtNo: m.districtNo, ...targetInfo,
         type: rForm.type, urgency: rForm.urgency, title: rForm.title.trim(), details: rForm.details.trim(),
         status: "open", postedAt: dateStr()
       };
@@ -433,7 +450,7 @@ function App() {
       if (!rForm.nonMemberName.trim() || !rForm.nonMemberPhone.trim()) return;
       entry = {
         id: uid(), posterType:"non-member", memberId:"", memberName: rForm.nonMemberName.trim(), businessName:"Non-member", phone: rForm.nonMemberPhone.trim(),
-        clubName:"", clubNo:"", districtNo:"",
+        clubName:"", clubNo:"", districtNo:"", ...targetInfo,
         type: rForm.type, urgency: rForm.urgency, title: rForm.title.trim(), details: rForm.details.trim(),
         status: "open", postedAt: dateStr()
       };
@@ -685,6 +702,38 @@ function App() {
             </div>
           )}
 
+          <Fld label="Post this to *">
+            <div className="flex gap-1 bg-slate-100 p-1 rounded-xl w-fit">
+              <button onClick={()=>setRForm({...rForm,targetType:"everyone",targetMemberId:""})} className={`px-4 py-1.5 rounded-lg text-sm font-bold ${rForm.targetType==="everyone"?"bg-white text-[#17458F] shadow-sm":"text-slate-500"}`}>🌐 Everyone</button>
+              <button onClick={()=>setRForm({...rForm,targetType:"specific"})} className={`px-4 py-1.5 rounded-lg text-sm font-bold ${rForm.targetType==="specific"?"bg-white text-[#17458F] shadow-sm":"text-slate-500"}`}>🎯 Specific Member</button>
+            </div>
+          </Fld>
+
+          {rForm.targetType==="specific" && (
+            <Fld label="Search the member to target" hint="For now this still shows in the public feed, marked 🎯 — once member login (mobile + PIN) launches, targeted requests will go straight to that member's personal feed.">
+              <input value={targetSearch} onChange={e=>{setTargetSearch(e.target.value); setRForm({...rForm,targetMemberId:""});}}
+                placeholder="Type a member's name…" className={INP}/>
+              {!rForm.targetMemberId && (
+                <div className="mt-1.5 border border-slate-200 rounded-xl max-h-48 overflow-y-auto divide-y divide-slate-50">
+                  {targetSearchResults.length===0 && <p className="text-xs text-slate-400 p-3">No match found.</p>}
+                  {targetSearchResults.map(m=>(
+                    <button key={m.id} onClick={()=>{setRForm({...rForm,targetMemberId:m.id}); setTargetSearch(`${m.name} — ${m.businessName}`);}}
+                      className="w-full text-left px-3 py-2 hover:bg-slate-50 text-sm">
+                      <div className="font-semibold text-slate-700">{m.name} <span className="text-slate-400 font-normal">— {m.businessName}</span></div>
+                      <div className="text-[11px] text-slate-400">{m.clubName||"—"} {m.clubNo?`· Club No. ${m.clubNo}`:""} {m.districtNo?`· District ${m.districtNo}`:""}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {rForm.targetMemberId && (
+                <div className="mt-1.5 flex items-center justify-between bg-blue-50 border border-blue-200 rounded-xl px-3 py-2">
+                  <span className="text-xs font-bold text-blue-700">🎯 Targeting: {members.find(x=>x.id===rForm.targetMemberId)?.name}</span>
+                  <button onClick={()=>{setRForm({...rForm,targetMemberId:""}); setTargetSearch("");}} className="text-xs font-bold text-slate-400 hover:text-red-500">Change</button>
+                </div>
+              )}
+            </Fld>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <Fld label="Request type">
               <select value={rForm.type} onChange={e=>setRForm({...rForm,type:e.target.value})} className={INP}>
@@ -702,7 +751,7 @@ function App() {
           <div className="flex gap-3 pt-2 border-t border-slate-100">
             <button onClick={closeRequestModal} className="flex-1 py-2.5 bg-slate-100 text-slate-700 rounded-xl text-sm font-bold hover:bg-slate-200">Cancel</button>
             <button onClick={submitRequest}
-              disabled={!rForm.title.trim() || (rForm.posterType==="member" ? !rForm.memberId : !(rForm.nonMemberName.trim()&&rForm.nonMemberPhone.trim()))}
+              disabled={!rForm.title.trim() || (rForm.posterType==="member" ? !rForm.memberId : !(rForm.nonMemberName.trim()&&rForm.nonMemberPhone.trim())) || (rForm.targetType==="specific" && !rForm.targetMemberId)}
               className="flex-1 py-2.5 bg-[#17458F] text-white rounded-xl text-sm font-bold hover:bg-[#123a78] disabled:opacity-40">Post Request</button>
           </div>
         </div>
@@ -918,13 +967,14 @@ function App() {
 
           <div className="space-y-3">
             {filteredRequests.map(r => (
-              <div key={r.id} className={`bg-white rounded-2xl border shadow-sm p-5 ${r.status==="fulfilled"?"border-slate-100 opacity-60":"border-slate-100"}`}>
+              <div key={r.id} className={`bg-white rounded-2xl border shadow-sm p-5 ${r.status==="fulfilled"?"border-slate-100 opacity-60":r.targetType==="specific"?"border-blue-200":"border-slate-100"}`}>
                 <div className="flex items-start justify-between gap-3 mb-2 flex-wrap">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-[10px] font-bold uppercase tracking-widest text-[#17458F] bg-[#17458F]/5 px-2 py-1 rounded-full">{r.type}</span>
                     <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full
                       ${r.urgency==="Immediate"?"bg-red-50 text-red-600":r.urgency==="This month"?"bg-amber-50 text-amber-600":"bg-slate-50 text-slate-500"}`}>{r.urgency}</span>
                     {r.status==="fulfilled" && <span className="text-[10px] font-bold uppercase tracking-widest bg-emerald-50 text-emerald-600 px-2 py-1 rounded-full">✓ Fulfilled</span>}
+                    {r.targetType==="specific" && <span className="text-[10px] font-bold uppercase tracking-widest bg-blue-50 text-blue-600 px-2 py-1 rounded-full">🎯 For {r.targetMemberName}</span>}
                   </div>
                   <span className="text-xs text-slate-300 whitespace-nowrap">{fmtDate(r.postedAt)}</span>
                 </div>
